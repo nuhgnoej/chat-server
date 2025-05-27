@@ -18,12 +18,13 @@ const io = new Server(server, {
 });
 
 io.on("connection", (socket) => {
-  const ip = socket.handshake.headers["x-forwarded-for"] || socket.handshake.address;
+  const ip =
+    socket.handshake.headers["x-forwarded-for"] || socket.handshake.address;
   console.log(`✅ 사용자 접속 (IP: ${ip})`);
 
-  socket.on("joinRoom", (roomId) => {
+  socket.on("joinRoom", ({ roomId, senderId }) => {
     socket.join(roomId);
-    console.log(`📡 ${socket.id} joined room ${roomId}`);
+    console.log(`📡 ${senderId} joined room ${roomId}`);
   });
 
   socket.on("sendMessage", async (msg) => {
@@ -39,16 +40,35 @@ io.on("connection", (socket) => {
         body: JSON.stringify([
           {
             room_id: msg.room_id,
-            sender: msg.sender,
+            sender_id: msg.senderId,
             content: msg.content,
           },
         ]),
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "메시지 저장 실패");
 
-      io.to(msg.room_id).emit("newMessage", data[0]);
+      const [message] = data;
+
+      // sender_id → nickname
+      const profileRes = await fetch(
+        `${SUPABASE_API_URL}/rest/v1/profiles?id=eq.${message.sender_id}&select=nickname`,
+        {
+          headers: {
+            apikey: API_KEY,
+            Authorization: `Bearer ${API_KEY}`,
+          },
+        }
+      );
+      const [profile] = await profileRes.json();
+
+      // nickname 추가 후 emit
+      io.to(msg.room_id).emit("newMessage", {
+        ...message,
+        sender: { nickname: profile?.nickname ?? "알 수 없음" },
+      });
+
+      if (!res.ok) throw new Error(data.message || "메시지 저장 실패");
     } catch (err) {
       console.error("❌ 메시지 저장 실패", err.message);
     }
@@ -70,7 +90,5 @@ server.listen(3001, () => {
 
   console.log("🚀 Socket server running!");
   console.log(`📡 Local:   http://localhost:3001`);
-  addresses.forEach((addr) =>
-    console.log(`📡 Network: http://${addr}:3001`)
-  );
+  addresses.forEach((addr) => console.log(`📡 Network: http://${addr}:3001`));
 });
